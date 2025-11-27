@@ -10,204 +10,142 @@ const APP_ID = "3d25a35f9a60404c8e2c7ac82f621505";
 const CHANNEL = "proLiveClass";
 const TOKEN =
   "007eJxTYHgi23nG7vvbhYxHsv51JUzTEYxxji5ptPtUen3G0/vZ1dcUGIxTjEwTjU3TLBPNDEwMTJItUo2SzROTLYzSzIwMTQ1M5x1Qz2wIZGQ4ySbNwAiFID4PQ0FRvk9mWapzTmJxMQMDAN29I4I=";
+const UID = 0;
 // ----------------------------------------
 
 const localVideo = ref(null);
 const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
-
 let screenTrack = null;
 
 // ---------------- LOAD USERS ----------------
 onMounted(async () => {
-  console.log("Loading users.json...");
   const res = await fetch("/users.json");
   const data = await res.json();
-
   meetStore.instructor = data.instructor;
   meetStore.students = data.students;
 
-  console.log("Users loaded:", data);
+  if (CHANNEL) {
+    joinChannel(); // call join function automatically
+  }
 });
 
-// ---------------- JOIN CLASS ----------------
-const joinClass = async () => {
-  console.log("Joining class...");
-
+// ---------------- JOIN CHANNEL ----------------
+const joinChannel = async () => {
   try {
-    const uid = await client.join(APP_ID, CHANNEL, TOKEN);
-    console.log("Joined RTC room with UID:", uid);
+    const uid = await client.join(APP_ID, CHANNEL, TOKEN, UID);
+    console.log("Joined with UID:", uid);
+
+    // --- Microphone track ---
+    meetStore.localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+
+    // --- Camera track ---
+    meetStore.localVideoTrack = await AgoraRTC.createCameraVideoTrack();
+    meetStore.localVideoTrack.play(localVideo.value);
+
+    // --- Publish local tracks ---
+    await client.publish([
+      meetStore.localAudioTrack,
+      meetStore.localVideoTrack,
+    ]);
+
+    // --- Handle remote users ---
+
+    // Declare event handler for "user-published"
+    client.on("user-published", async (user, mediaType) => {
+      // Subscribe to the user's media
+      await client.subscribe(user, mediaType);
+
+      // Add user to remoteUsers if not already there
+      if (!meetStore.remoteUsers.includes(user.uid)) {
+        meetStore.remoteUsers.push(user.uid);
+      }
+
+      // Handle video
+      if (mediaType === "video") {
+        // Play the remote video track in a DOM element with ID "remote-<user.uid>"
+        setTimeout(() => user.videoTrack.play("remote-" + user.uid), 100);
+      }
+
+      // Handle audio
+      if (mediaType === "audio") {
+        user.audioTrack.play();
+      }
+    });
+
+    // Handle the "user-unpublished" event to remove the user's media
+    client.on("user-unpublished", (user, mediaType) => {
+      // Remove user from remoteUsers if video is unpublished
+      if (mediaType === "video") {
+        meetStore.remoteUsers = meetStore.remoteUsers.filter(
+          (id) => id !== user.uid
+        );
+      }
+
+      // Stop audio if audio track is unpublished
+      if (mediaType === "audio" && user.audioTrack) {
+        user.audioTrack.stop();
+      }
+
+      // Stop video if video track is unpublished
+      if (mediaType === "video" && user.videoTrack) {
+        user.videoTrack.stop();
+      }
+    });
   } catch (err) {
     console.error("JOIN ERROR:", err);
-    return;
   }
-
-  // --- Create CAMERA TRACK ---
-  try {
-    console.log("Creating camera video track...");
-    meetStore.localVideoTrack = await AgoraRTC.createCameraVideoTrack({
-      encoderConfig: "720p",
-      optimizationMode: "motion",
-    });
-    console.log("Camera track created:", meetStore.localVideoTrack);
-  } catch (err) {
-    console.error("CAMERA ERROR:", err);
-  }
-
-  // --- Create MICROPHONE TRACK ---
-  try {
-    console.log("Creating microphone track...");
-    meetStore.localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
-    console.log("Microphone track created:", meetStore.localAudioTrack);
-  } catch (err) {
-    console.error("MIC ERROR:", err);
-  }
-
-  // Play local camera
-  try {
-    if (meetStore.localVideoTrack) {
-      console.log("Playing local video...");
-      meetStore.localVideoTrack.play(localVideo.value);
-    }
-  } catch (err) {
-    console.error("LOCAL VIDEO PLAY ERROR:", err);
-  }
-
-  // Publish Tracks
-  try {
-    console.log("Publishing tracks...");
-    await client.publish(
-      [meetStore.localVideoTrack, meetStore.localAudioTrack].filter(Boolean)
-    );
-    console.log("Tracks published");
-  } catch (err) {
-    console.error("PUBLISH ERROR:", err);
-  }
-
-  // --- Remote user published ---
-  client.on("user-published", async (user, mediaType) => {
-    console.log("User published:", user.uid, "type:", mediaType);
-
-    await client.subscribe(user, mediaType);
-    console.log("Subscribed to remote:", user.uid);
-
-    if (!meetStore.remoteUsers.includes(user.uid)) {
-      meetStore.remoteUsers.push(user.uid);
-    }
-
-    if (mediaType === "video") {
-      console.log("Playing remote video:", user.uid);
-      setTimeout(() => {
-        user.videoTrack.play("remote-" + user.uid);
-      }, 100);
-    }
-
-    if (mediaType === "audio") {
-      console.log("Playing remote audio:", user.uid);
-      user.audioTrack.play();
-    }
-  });
-
-  // --- Remote user left ---
-  client.on("user-unpublished", (user) => {
-    console.warn("User unpublished:", user.uid);
-    meetStore.remoteUsers = meetStore.remoteUsers.filter(
-      (id) => id !== user.uid
-    );
-  });
 };
 
-// ---------------- LEAVE CLASS ----------------
-const leaveClass = async () => {
-  console.log("Leaving class...");
+// ---------------- LEAVE MEET ----------------
+const leaveChannel = async () => {
+  if (meetStore.localAudioTrack) meetStore.localAudioTrack.close();
+  if (meetStore.localVideoTrack) meetStore.localVideoTrack.close();
+  if (screenTrack) screenTrack.close();
 
-  try {
-    if (meetStore.localVideoTrack) {
-      console.log("Closing camera track");
-      meetStore.localVideoTrack.close();
-    }
-    if (meetStore.localAudioTrack) {
-      console.log("Closing mic track");
-      meetStore.localAudioTrack.close();
-    }
-    if (screenTrack) {
-      console.log("Closing screen track");
-      screenTrack.close();
-    }
-
-    await client.leave();
-    console.log("Left class successfully");
-  } catch (err) {
-    console.error("LEAVE ERROR:", err);
-  }
-
+  await client.leave();
   meetStore.remoteUsers = [];
 };
 
-onBeforeUnmount(leaveClass);
-
-// ---------------- MIC TOGGLE ----------------
-const toggleMic = async () => {
-  console.log("Toggle MIC");
-
+// ---------------- MIC / CAMERA ----------------
+const toggleMic = () => {
   if (!meetStore.localAudioTrack) return;
-
   const enabled = meetStore.localAudioTrack.enabled;
   meetStore.localAudioTrack.setEnabled(!enabled);
-
-  console.log("Mic new state:", !enabled);
 };
 
-// ---------------- CAMERA TOGGLE ----------------
-const toggleCamera = async () => {
-  console.log("Toggle CAMERA");
-
+const toggleCamera = () => {
   if (!meetStore.localVideoTrack) return;
-
   const enabled = meetStore.localVideoTrack.enabled;
   meetStore.localVideoTrack.setEnabled(!enabled);
-
-  console.log("Camera new state:", !enabled);
 };
 
 // ---------------- SCREEN SHARE ----------------
 const startScreenShare = async () => {
-  if (!client || !meetStore.localVideoTrack) {
-    console.warn(
-      "Cannot start screen share: not joined yet or no camera track"
-    );
-    return;
-  }
+  if (!client) return;
 
-  console.log("Starting screen share...");
-  try {
-    screenTrack = await AgoraRTC.createScreenVideoTrack({}, "auto");
+  screenTrack = await AgoraRTC.createScreenVideoTrack({}, "auto");
 
-    console.log("Screen track created:", screenTrack);
+  // Unpublish camera, publish screen
+  await client.unpublish(meetStore.localVideoTrack);
+  await client.publish(screenTrack);
+  screenTrack.play(localVideo.value);
 
-    await client.unpublish(meetStore.localVideoTrack);
-    console.log("Unpublished camera");
-
-    await client.publish(screenTrack);
-    console.log("Screen published");
-
-    screenTrack.play(localVideo.value);
-
-    screenTrack.on("track-ended", async () => {
-      console.warn("Screen share ended by user!");
-
-      await client.unpublish(screenTrack);
-      await client.publish(meetStore.localVideoTrack);
-
-      meetStore.localVideoTrack.play(localVideo.value);
-
-      screenTrack = null;
-
-      console.log("Returned to camera");
-    });
-  } catch (error) {
-    console.error("SCREEN SHARE ERROR:", error);
-  }
+  screenTrack.on("track-ended", async () => {
+    await client.unpublish(screenTrack);
+    await client.publish(meetStore.localVideoTrack);
+    meetStore.localVideoTrack.play(localVideo.value);
+    screenTrack = null;
+  });
 };
+
+// ---------------- SHARE LINK ----------------
+const shareMeet = () => {
+  const url = `${window.location.origin}/meet?channel=${CHANNEL}&token=${TOKEN}`;
+  navigator.clipboard.writeText(url);
+  alert("Meet link copied: " + url);
+};
+
+onBeforeUnmount(leaveChannel);
 </script>
 
 <template>
@@ -219,9 +157,7 @@ const startScreenShare = async () => {
           :src="meetStore.instructor?.avatar"
           class="w-16 h-16 rounded-full border"
         />
-        <p class="font-semibold text-lg">
-          {{ meetStore.instructor?.name }}
-        </p>
+        <p class="font-semibold text-lg">{{ meetStore.instructor?.name }}</p>
       </div>
 
       <div
@@ -238,6 +174,7 @@ const startScreenShare = async () => {
           Camera
         </button>
         <button
+          :disabled="!meetStore.localVideoTrack"
           @click="startScreenShare"
           class="bg-purple-500 px-4 py-2 rounded"
         >
@@ -271,16 +208,22 @@ const startScreenShare = async () => {
       <!-- Buttons -->
       <div class="flex gap-3 mt-8">
         <button
-          @click="joinClass"
+          @click="joinChannel"
           class="bg-green-600 text-white px-4 py-2 rounded"
         >
-          Join Class
+          Join
         </button>
         <button
-          @click="leaveClass"
+          @click="leaveChannel"
           class="bg-red-600 text-white px-4 py-2 rounded"
         >
-          Leave Class
+          Leave
+        </button>
+        <button
+          @click="shareMeet"
+          class="bg-blue-500 text-white px-4 py-2 rounded"
+        >
+          Share Link
         </button>
       </div>
     </div>
