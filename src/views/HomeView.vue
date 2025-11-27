@@ -23,10 +23,6 @@ onMounted(async () => {
   const data = await res.json();
   meetStore.instructor = data.instructor;
   meetStore.students = data.students;
-
-  if (CHANNEL) {
-    joinChannel(); // call join function automatically
-  }
 });
 
 // ---------------- JOIN CHANNEL ----------------
