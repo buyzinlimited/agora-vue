@@ -1,0 +1,13 @@
+{
+  "instructor": {
+    "id": 1,
+    "name": "Abdullah Teacher",
+    "avatar": "https://i.pravatar.cc/150?img=12"
+  },
+  "students": [
+    {"id": 101,"name":"Rafi","avatar":"https://i.pravatar.cc/150?img=33"},
+    {"id": 102,"name":"Jahid","avatar":"https://i.pravatar.cc/150?img=44"},
+    {"id": 103,"name":"Mehjabin","avatar":"https://i.pravatar.cc/150?img=21"},
+    {"id": 104,"name":"Sadia","avatar":"https://i.pravatar.cc/150?img=35"}
+  ]
+}
